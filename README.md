@@ -58,12 +58,6 @@ Credentials are loaded from:
 
 If you get a 401, make sure you've authenticated first (`claude auth login` / `codex auth`).
 
-## Built with
-
-- [Readest](https://github.com/readest/readest) — ebook reader
-- [Pi](https://github.com/badlogic/pi-mono) — AI agent framework
-- [Tauri v2](https://tauri.app) — native desktop runtime
-
 ## Installation
 
 ### Homebrew (Recommended)
@@ -91,6 +85,12 @@ make lint      # Run all linting
 make fmt       # Format all code
 make clean     # Remove all build artifacts
 ```
+
+## Built with
+
+- [Readest](https://github.com/readest/readest) — ebook reader
+- [Pi](https://github.com/badlogic/pi-mono) — AI agent framework
+- [Tauri v2](https://tauri.app) — native desktop runtime
 
 ## License
 
