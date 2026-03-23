@@ -64,6 +64,21 @@ If you get a 401, make sure you've authenticated first (`claude auth login` / `c
 - [Pi](https://github.com/badlogic/pi-mono) — AI agent framework
 - [Tauri v2](https://tauri.app) — native desktop runtime
 
+## Installation
+
+### Homebrew (Recommended)
+
+```bash
+brew install eddmann/tap/marginalia
+```
+
+### Manual Download
+
+Download the latest release from [GitHub Releases](https://github.com/eddmann/Marginalia/releases):
+
+- **macOS:** `.dmg` (Apple Silicon and Intel)
+- **Linux:** `.AppImage` or `.deb`
+
 ## Development
 
 Requires Rust, Node.js 20+, and pnpm.

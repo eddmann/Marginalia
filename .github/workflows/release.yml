@@ -214,3 +214,35 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          # Calculate SHA256 for each macOS architecture
+          SHA_ARM64=$(shasum -a 256 artifacts/marginalia-${VERSION}-macos-arm64.dmg | cut -d' ' -f1)
+          SHA_AMD64=$(shasum -a 256 artifacts/marginalia-${VERSION}-macos-amd64.dmg | cut -d' ' -f1)
+
+          echo "ARM64 SHA256: ${SHA_ARM64}"
+          echo "AMD64 SHA256: ${SHA_AMD64}"
+
+          # Clone homebrew-tap and update the cask
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/eddmann/homebrew-tap.git
+          cd homebrew-tap
+
+          # Update version
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/marginalia.rb
+
+          # Update ARM64 SHA256
+          sed -i "s/sha256 arm:   \"[^\"]*\"/sha256 arm:   \"${SHA_ARM64}\"/" Casks/marginalia.rb
+
+          # Update AMD64 SHA256
+          sed -i "s/^\([[:space:]]*\)intel: \"[^\"]*\"/\1intel: \"${SHA_AMD64}\"/" Casks/marginalia.rb
+
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/marginalia.rb
+          git commit -m "chore(marginalia): update to ${VERSION}"
+          git push
