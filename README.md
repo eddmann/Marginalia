@@ -8,8 +8,6 @@ A desktop ebook reader with a built-in AI companion.
 
 > _Marginalia (n.) — notes, comments, and annotations made in the margins of a book; from Latin marginalis, "of the margin."_
 
-I built this to aid in reading technical books, where I find I constantly wish to stop and ask questions about the material. Inspired by Andrej Karpathy's [reader3](https://github.com/karpathy/reader3). Select a passage, ask a question, and have an ongoing conversation about it without leaving the page.
-
 <p align="center">
   <img src="docs/screenshot-reader.png" alt="Marginalia showing an ebook chapter on attention mechanisms with the AI chat sidebar open">
 </p>
@@ -22,6 +20,8 @@ I built this to aid in reading technical books, where I find I constantly wish t
 </table>
 
 ## What it does
+
+I built this to aid in reading technical books, where I find I constantly wish to stop and ask questions about the material. Inspired by Andrej Karpathy's [reader3](https://github.com/karpathy/reader3). Select a passage, ask a question, and have an ongoing conversation about it without leaving the page.
 
 Marginalia combines a slimmed-down fork of [Readest](https://github.com/readest/readest) (an open-source ebook reader) with [Pi](https://github.com/badlogic/pi-mono) (an AI agent framework) into a single desktop app. Read on the left, chat on the right. The AI knows what book you're reading, what chapter you're in, and has the full chapter text as context.
 
