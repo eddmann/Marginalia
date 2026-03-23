@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+target/
+dist/
+*.tsbuildinfo
+resources/
+.env
+.DS_Store
+.idea/
+.vscode/

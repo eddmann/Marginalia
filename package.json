@@ -1,0 +1,24 @@
+{
+  "name": "marginalia",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A desktop ebook reader with a built-in AI companion",
+  "author": "Edd Mann <the@eddmann.com>",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eddmann/Marginalia.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eddmann/Marginalia/issues"
+  },
+  "homepage": "https://github.com/eddmann/Marginalia#readme",
+  "packageManager": "pnpm@10.29.2",
+  "type": "module",
+  "scripts": {
+    "dev": "cd app && pnpm dev",
+    "tauri-dev": "cd app && pnpm tauri dev",
+    "build": "cd app && pnpm build",
+    "tauri-build": "cd app && pnpm tauri build"
+  }
+}

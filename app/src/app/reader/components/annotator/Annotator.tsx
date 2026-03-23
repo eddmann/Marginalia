@@ -1,0 +1,853 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { RiDeleteBinLine } from 'react-icons/ri';
+
+import * as CFI from 'foliate-js/epubcfi.js';
+import { Overlayer } from 'foliate-js/overlayer.js';
+import { useEnv } from '@/context/EnvContext';
+import { BookNote, BooknoteGroup, HighlightColor, HighlightStyle } from '@/types/book';
+import { NOTE_PREFIX } from '@/types/view';
+import { NativeTouchEventType } from '@/types/system';
+import { getLocale, getOSPlatform, makeSafeFilename, uniqueId } from '@/utils/misc';
+import { useThemeStore } from '@/store/themeStore';
+import { useBookDataStore } from '@/store/bookDataStore';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useReaderStore } from '@/store/readerStore';
+import { useNotebookStore } from '@/store/notebookStore';
+import { useTranslation } from '@/hooks/useTranslation';
+import { useResponsiveSize } from '@/hooks/useResponsiveSize';
+import { useDeviceControlStore } from '@/store/deviceStore';
+import { useFoliateEvents } from '../../hooks/useFoliateEvents';
+import { useTextSelector } from '../../hooks/useTextSelector';
+import { Point, Position, TextSelection } from '@/utils/sel';
+import { getPopupPosition, getPosition, getTextFromRange } from '@/utils/sel';
+import { eventDispatcher } from '@/utils/event';
+import { findTocItemBS } from '@/utils/toc';
+import { throttle } from '@/utils/throttle';
+
+import { getIndexFromCfi, isCfiInLocation } from '@/utils/cfi';
+import { TransformContext } from '@/services/transformers/types';
+import { transformContent } from '@/services/transformService';
+import { getHighlightColorHex } from '../../utils/annotatorUtil';
+import { annotationToolButtons } from './AnnotationTools';
+import AnnotationRangeEditor from './AnnotationRangeEditor';
+import AnnotationPopup from './AnnotationPopup';
+import useShortcuts from '@/hooks/useShortcuts';
+import { useChatStore } from '@/store/chatStore';
+import ExportMarkdownDialog from './ExportMarkdownDialog';
+
+const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
+  const _ = useTranslation();
+  const { envConfig, appService } = useEnv();
+  const { settings } = useSettingsStore();
+  const { isDarkMode } = useThemeStore();
+  const { getConfig, saveConfig, getBookData, updateBooknotes } = useBookDataStore();
+  const { getProgress, getView, getViewsById, getViewSettings } = useReaderStore();
+  const { setNotebookVisible, setNotebookNewAnnotation } = useNotebookStore();
+  const { listenToNativeTouchEvents } = useDeviceControlStore();
+
+  const osPlatform = getOSPlatform();
+  const config = getConfig(bookKey)!;
+  const progress = getProgress(bookKey)!;
+  const bookData = getBookData(bookKey)!;
+  const view = getView(bookKey);
+  const viewSettings = getViewSettings(bookKey)!;
+  const primaryLang = bookData.book?.primaryLanguage || 'en';
+
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  const [selection, setSelection] = useState<TextSelection | null>(null);
+  const [showAnnotPopup, setShowAnnotPopup] = useState(false);
+  const [showDeepLPopup, _setShowDeepLPopup] = useState(false);
+  const [trianglePosition, setTrianglePosition] = useState<Position>();
+  const [annotPopupPosition, setAnnotPopupPosition] = useState<Position>();
+  const [highlightOptionsVisible, setHighlightOptionsVisible] = useState(false);
+  const [showAnnotationNotes, setShowAnnotationNotes] = useState(false);
+  const [annotationNotes, setAnnotationNotes] = useState<BookNote[]>([]);
+  const [editingAnnotation, setEditingAnnotation] = useState<BookNote | null>(null);
+  const [externalDragPoint, setExternalDragPoint] = useState<Point | null>(null);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportData, setExportData] = useState<{
+    booknotes: BookNote[];
+    booknoteGroups: { [href: string]: BooknoteGroup };
+  } | null>(null);
+
+  const [selectedStyle, setSelectedStyle] = useState<HighlightStyle>(
+    settings.globalReadSettings.highlightStyle,
+  );
+  const [selectedColor, setSelectedColor] = useState<HighlightColor>(
+    settings.globalReadSettings.highlightStyles[selectedStyle],
+  );
+  const androidTouchEndRef = useRef(false);
+
+  const showingPopup =
+    showAnnotPopup ||
+    showDeepLPopup;
+
+  const popupPadding = useResponsiveSize(10);
+  const trianglePadding = popupPadding * 2 + 6;
+  const maxWidth = window.innerWidth - 2 * popupPadding;
+  const annotPopupWidth = Math.min(useResponsiveSize(240), maxWidth);
+  const annotPopupHeight = useResponsiveSize(44);
+  const androidSelectionHandlerHeight = 0;
+
+  // Reposition popups on scroll without dismissing them
+  const repositionPopups = useCallback(() => {
+    if (!selection || !selection.text) return;
+    const gridFrame = document.querySelector(`#gridcell-${bookKey}`);
+    if (!gridFrame) return;
+    const rect = gridFrame.getBoundingClientRect();
+    const triangPos = getPosition(selection, rect, trianglePadding, viewSettings.vertical);
+    const annotPopupPos = getPopupPosition(
+      triangPos,
+      rect,
+      viewSettings.vertical ? annotPopupHeight : annotPopupWidth,
+      viewSettings.vertical ? annotPopupWidth : annotPopupHeight,
+      popupPadding,
+    );
+    if (annotPopupPos.dir === 'down' && osPlatform === 'android') {
+      triangPos.point.y += androidSelectionHandlerHeight;
+      annotPopupPos.point.y += androidSelectionHandlerHeight;
+    }
+    if (triangPos.point.x == 0 || triangPos.point.y == 0) return;
+    setAnnotPopupPosition(annotPopupPos);
+    setTrianglePosition(triangPos);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, bookKey, viewSettings.vertical]);
+
+  useEffect(() => {
+    const highlightStyle = settings.globalReadSettings.highlightStyle;
+    setSelectedStyle(highlightStyle);
+    setSelectedColor(settings.globalReadSettings.highlightStyles[highlightStyle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.globalReadSettings.highlightStyle]);
+
+  const transformCtx: TransformContext = useMemo(
+    () => ({
+      bookKey,
+      viewSettings: getViewSettings(bookKey)!,
+      userLocale: getLocale(),
+      content: '',
+      isFixedLayout: bookData.isFixedLayout,
+      transformers: ['punctuation'],
+      reversePunctuationTransform: true,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const getAnnotationText = useCallback(
+    async (range: Range) => {
+      transformCtx['content'] = getTextFromRange(range, primaryLang.startsWith('ja') ? ['rt'] : []);
+      return await transformContent(transformCtx);
+    },
+    [primaryLang, transformCtx],
+  );
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleDismissPopup = useCallback(
+    throttle(() => {
+      setSelection(null);
+      setShowAnnotPopup(false);
+      setEditingAnnotation(null);
+    }, 500),
+    [],
+  );
+
+  const {
+    isTextSelected,
+    isInstantAnnotating,
+    handleScroll,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerCancel,
+    handlePointerUp,
+    handleSelectionchange,
+    handleShowPopup,
+    handleUpToPopup,
+    handleContextmenu,
+  } = useTextSelector(
+    bookKey,
+    setSelection,
+    setEditingAnnotation,
+    setExternalDragPoint,
+    getAnnotationText,
+    handleDismissPopup,
+  );
+
+  const handleDismissPopupAndSelection = () => {
+    handleDismissPopup();
+    view?.deselect();
+    isTextSelected.current = false;
+  };
+
+  const onLoad = (event: Event) => {
+    const detail = (event as CustomEvent).detail;
+    const { doc, index } = detail;
+
+    const handleTouchmove = (ev: TouchEvent) => {
+      // Available on iOS, on Android not fired
+      // To make the popup not follow the selection while dragging
+      setShowAnnotPopup(false);
+      if (!isInstantAnnotating.current) {
+        setEditingAnnotation(null);
+      }
+      handleTouchMove(ev);
+    };
+
+    const handleNativeTouch = (event: CustomEvent) => {
+      const ev = event.detail as NativeTouchEventType;
+      if (ev.type === 'touchstart') {
+        androidTouchEndRef.current = false;
+        handleTouchStart();
+      } else if (ev.type === 'touchend') {
+        androidTouchEndRef.current = true;
+        handleTouchEnd();
+        handlePointerUp(doc, index);
+      }
+    };
+
+    if (appService?.isAndroidApp) {
+      listenToNativeTouchEvents();
+      eventDispatcher.on('native-touch', handleNativeTouch);
+    }
+
+    // Attach generic selection listeners for all formats, including PDF.
+    // For PDF we only guarantee Copy; highlight/annotate may be limited by CFI support.
+    view?.renderer?.addEventListener('scroll', handleScroll);
+    // Reposition popups on scroll to keep them in view
+    view?.renderer?.addEventListener('scroll', () => {
+      repositionPopups();
+    });
+    const opts = { passive: false };
+    detail.doc?.addEventListener('touchstart', handleTouchStart, opts);
+    detail.doc?.addEventListener('touchmove', handleTouchmove, opts);
+    detail.doc?.addEventListener('touchend', handleTouchEnd);
+    detail.doc?.addEventListener('pointerdown', handlePointerDown.bind(null, doc, index), opts);
+    detail.doc?.addEventListener('pointermove', handlePointerMove.bind(null, doc, index), opts);
+    detail.doc?.addEventListener('pointercancel', handlePointerCancel.bind(null, doc, index));
+    detail.doc?.addEventListener('pointerup', handlePointerUp.bind(null, doc, index));
+    detail.doc?.addEventListener('selectionchange', handleSelectionchange.bind(null, doc, index));
+
+    // Disable the default context menu on mobile devices (selection handles suffice)
+    detail.doc?.addEventListener('contextmenu', handleContextmenu);
+  };
+
+  const onCreateOverlay = (event: Event) => {
+    const detail = (event as CustomEvent).detail;
+    const { booknotes = [] } = getConfig(bookKey)!;
+    booknotes
+      .filter(
+        (booknote) =>
+          booknote.type === 'annotation' &&
+          !booknote.deletedAt &&
+          getIndexFromCfi(booknote.cfi) === detail.index,
+      )
+      .map((annotation) => {
+        try {
+          view?.addAnnotation(annotation);
+        } catch (_err) {
+
+        }
+      });
+  };
+
+  const onDrawAnnotation = (event: Event) => {
+    const viewSettings = getViewSettings(bookKey)!;
+    const isBwEink = viewSettings.isEink && !viewSettings.isColorEink;
+    const detail = (event as CustomEvent).detail;
+    const { draw, annotation, doc, range } = detail;
+    const { style, color } = annotation as BookNote;
+    const hexColor = getHighlightColorHex(settings, color);
+    const einkBgColor = isDarkMode ? '#000000' : '#ffffff';
+    const einkFgColor = isDarkMode ? '#ffffff' : '#000000';
+    if (annotation.note) {
+      const { defaultView } = doc;
+      const node = range.startContainer;
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      const { writingMode } = defaultView.getComputedStyle(el);
+      draw(Overlayer.bubble, { writingMode });
+    } else if (style === 'highlight') {
+      draw(Overlayer.highlight, {
+        color: isBwEink ? einkBgColor : hexColor,
+        vertical: viewSettings.vertical,
+      });
+    } else if (['underline', 'squiggly'].includes(style as string)) {
+      const { defaultView } = doc;
+      const node = range.startContainer;
+      const el = node.nodeType === 1 ? node : node.parentElement;
+      const { writingMode, lineHeight, fontSize } = defaultView.getComputedStyle(el);
+      const fontSizeValue = parseFloat(fontSize) || viewSettings.defaultFontSize;
+      const lineHeightValue = parseFloat(lineHeight) || viewSettings.lineHeight * fontSizeValue;
+      const strokeWidth = 2;
+      const verticalCompensation = appService?.isMobile ? 0 : -1;
+      const horizontalCompensation = appService?.isMobile ? -1 : 0;
+      const padding = viewSettings.vertical
+        ? (lineHeightValue - fontSizeValue) / 2 - strokeWidth + verticalCompensation
+        : (lineHeightValue - fontSizeValue) / 2 - strokeWidth + horizontalCompensation;
+      draw(Overlayer[style as keyof typeof Overlayer], {
+        writingMode,
+        color: isBwEink ? einkFgColor : hexColor,
+        padding,
+      });
+    }
+  };
+
+  const onShowAnnotation = (event: Event) => {
+    const detail = (event as CustomEvent).detail;
+    const { value, index, range } = detail;
+    const { booknotes = [] } = getConfig(bookKey)!;
+    const isNote = value.startsWith(NOTE_PREFIX);
+    const cfi = isNote ? value.replace(NOTE_PREFIX, '') : value;
+    const annotations = booknotes.filter(
+      (booknote) => booknote.type === 'annotation' && !booknote.deletedAt && booknote.cfi === cfi,
+    );
+    const annotation = annotations.find(
+      (annotation) => (!isNote && annotation.style) || (isNote && annotation.note),
+    );
+    if (!annotation) return;
+
+    const { style, color, text, note } = annotation;
+    const selection = {
+      key: bookKey,
+      annotated: true,
+      text: text ?? '',
+      note: note ?? '',
+      rect: isNote ? detail.rect : undefined,
+      cfi,
+      index,
+      range,
+      page: annotation.page || progress.page,
+    };
+    if (isNote) {
+      setShowAnnotationNotes(true);
+      setHighlightOptionsVisible(false);
+      setEditingAnnotation(null);
+    } else {
+      setShowAnnotPopup(false);
+      setEditingAnnotation(null);
+      setShowAnnotationNotes(false);
+      setAnnotationNotes([]);
+      if (style && color) {
+        setSelectedStyle(style);
+        setSelectedColor(color);
+      }
+      if (style && range) {
+        setEditingAnnotation(annotation);
+      }
+    }
+    setSelection(selection);
+    handleUpToPopup();
+  };
+
+  useFoliateEvents(view, { onLoad, onCreateOverlay, onDrawAnnotation, onShowAnnotation });
+
+  useEffect(() => {
+    handleShowPopup(showingPopup);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showingPopup]);
+
+  // When popups are visible, update their positions on scroll events
+  useEffect(() => {
+    const view = getView(bookKey);
+    if (!view?.renderer) return;
+    const onScroll = () => {
+      if (showingPopup) {
+        repositionPopups();
+      }
+    };
+    view.renderer.addEventListener('scroll', onScroll);
+    return () => {
+      view.renderer.removeEventListener('scroll', onScroll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookKey, showingPopup, repositionPopups]);
+
+  useEffect(() => {
+    eventDispatcher.on('export-annotations', handleExportMarkdown);
+    return () => {
+      eventDispatcher.off('export-annotations', handleExportMarkdown);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const updateBooknotesPage = async () => {
+      const config = getConfig(bookKey);
+      const view = getView(bookKey);
+      if (!config || !view) return;
+      const { booknotes: annotations = [] } = config;
+      annotations.sort((a, b) => {
+        return CFI.compare(a.cfi, b.cfi);
+      });
+      for (const annotation of annotations) {
+        if (annotation.deletedAt || annotation.page || !annotation.cfi) continue;
+        const progress = await view.getCFIProgress(annotation.cfi);
+        if (progress) {
+          annotation.page = progress.location.current + 1;
+        }
+      }
+      const updatedConfig = updateBooknotes(bookKey, annotations);
+      if (updatedConfig) {
+        saveConfig(envConfig, bookKey, updatedConfig, settings);
+      }
+    };
+    setTimeout(updateBooknotesPage, 3000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleQuickAction = () => {
+    const action = viewSettings.annotationQuickAction;
+    if (appService?.isAndroidApp && !androidTouchEndRef.current) return;
+    switch (action) {
+      case 'copy':
+        handleCopy(false);
+        handleDismissPopupAndSelection();
+        break;
+      case 'highlight':
+        // highlight is already applied in instant annotating
+        handleDismissPopupAndSelection();
+        break;
+      case 'search':
+        handleSearch();
+        break;
+      case 'chat':
+        handleSendToChat();
+        break;
+    }
+  };
+
+  useEffect(() => {
+    setHighlightOptionsVisible(!!(selection && selection.annotated));
+    if (selection && selection.text.trim().length > 0) {
+      const gridFrame = document.querySelector(`#gridcell-${bookKey}`);
+      if (!gridFrame) return;
+      const rect = gridFrame.getBoundingClientRect();
+      const triangPos = getPosition(selection, rect, trianglePadding, viewSettings.vertical);
+      const annotPopupPos = getPopupPosition(
+        triangPos,
+        rect,
+        viewSettings.vertical ? annotPopupHeight : annotPopupWidth,
+        viewSettings.vertical ? annotPopupWidth : annotPopupHeight,
+        popupPadding,
+      );
+      if (annotPopupPos.dir === 'down' && osPlatform === 'android') {
+        triangPos.point.y += androidSelectionHandlerHeight;
+        annotPopupPos.point.y += androidSelectionHandlerHeight;
+      }
+      if (triangPos.point.x == 0 || triangPos.point.y == 0) return;
+      setAnnotPopupPosition(annotPopupPos);
+      setTrianglePosition(triangPos);
+
+      const { enableAnnotationQuickActions, annotationQuickAction } = viewSettings;
+      if (enableAnnotationQuickActions && annotationQuickAction && isTextSelected.current) {
+        handleQuickAction();
+      } else {
+        handleShowAnnotPopup();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, bookKey]);
+
+  useEffect(() => {
+    if (!progress) return;
+    const { location } = progress;
+    const { booknotes = [] } = config;
+    const annotations = booknotes.filter(
+      (item) =>
+        !item.deletedAt &&
+        item.type === 'annotation' &&
+        item.style &&
+        isCfiInLocation(item.cfi, location),
+    );
+    const notes = booknotes.filter(
+      (item) =>
+        !item.deletedAt &&
+        item.type === 'annotation' &&
+        item.note &&
+        item.note.trim().length > 0 &&
+        isCfiInLocation(item.cfi, location),
+    );
+    try {
+      Promise.all(annotations.map((annotation) => view?.addAnnotation(annotation)));
+      Promise.all(
+        notes.map((note) => view?.addAnnotation({ ...note, value: `${NOTE_PREFIX}${note.cfi}` })),
+      );
+    } catch (_e) {
+
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress]);
+
+  useEffect(() => {
+    if (!config.booknotes || !selection?.cfi || !showAnnotationNotes) return;
+    const annotations = config.booknotes.filter(
+      (booknote) =>
+        booknote.type === 'annotation' && !booknote.deletedAt && booknote.cfi === selection.cfi,
+    );
+    const notes = annotations.filter((item) => item.note && item.note.trim().length > 0);
+    setAnnotationNotes(notes);
+  }, [selection?.cfi, showAnnotationNotes, config.booknotes]);
+
+  const handleShowAnnotPopup = () => {
+    if (!appService?.isMobile) {
+      containerRef.current?.focus();
+    }
+    setShowAnnotPopup(true);
+  };
+
+  const handleCopy = (dismissPopup = true) => {
+    if (!selection || !selection.text) return;
+    setTimeout(() => {
+      // Delay to ensure it won't be overridden by system clipboard actions
+      navigator.clipboard?.writeText(selection.text);
+    }, 100);
+    if (dismissPopup) {
+      handleDismissPopupAndSelection();
+    }
+
+    if (!viewSettings?.copyToNotebook) return;
+
+    eventDispatcher.dispatch('toast', {
+      type: 'info',
+      message: _('Copied to notebook'),
+      className: 'whitespace-nowrap',
+      timeout: 2000,
+    });
+
+    const { booknotes: annotations = [] } = config;
+    const cfi = view?.getCFI(selection.index, selection.range);
+    if (!cfi) return;
+    const annotation: BookNote = {
+      id: uniqueId(),
+      type: 'excerpt',
+      cfi,
+      note: '',
+      text: selection.text,
+      page: selection.page,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    const existingIndex = annotations.findIndex(
+      (annotation) =>
+        annotation.cfi === cfi && annotation.type === 'excerpt' && !annotation.deletedAt,
+    );
+    if (existingIndex !== -1) {
+      annotations[existingIndex] = annotation;
+    } else {
+      annotations.push(annotation);
+    }
+    const updatedConfig = updateBooknotes(bookKey, annotations);
+    if (updatedConfig) {
+      saveConfig(envConfig, bookKey, updatedConfig, settings);
+    }
+    if (!appService?.isMobile) {
+      setNotebookVisible(true);
+    }
+  };
+
+  const handleHighlight = (update = false, highlightStyle?: HighlightStyle) => {
+    if (!selection || !selection.text) return;
+    setHighlightOptionsVisible(true);
+    const { booknotes: annotations = [] } = config;
+    const cfi = view?.getCFI(selection.index, selection.range);
+    if (!cfi) return;
+    const style = highlightStyle || settings.globalReadSettings.highlightStyle;
+    const color = settings.globalReadSettings.highlightStyles[style];
+    setSelectedStyle(style);
+    setSelectedColor(color);
+
+    const annotation: BookNote = {
+      id: uniqueId(),
+      type: 'annotation',
+      cfi,
+      style,
+      color,
+      text: selection.text,
+      note: '',
+      page: progress.page,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const existingIndex = annotations.findIndex(
+      (annotation) =>
+        annotation.cfi === cfi &&
+        annotation.type === 'annotation' &&
+        annotation.style &&
+        !annotation.deletedAt,
+    );
+    const views = getViewsById(bookKey.split('-')[0]!);
+    if (existingIndex !== -1) {
+      views.forEach((view) => view?.addAnnotation(annotation, true));
+      if (update) {
+        annotation.id = annotations[existingIndex]!.id;
+        annotations[existingIndex] = annotation;
+        views.forEach((view) => view?.addAnnotation(annotation));
+      } else {
+        annotations[existingIndex]!.deletedAt = Date.now();
+        handleDismissPopup();
+      }
+    } else {
+      annotations.push(annotation);
+      views.forEach((view) => view?.addAnnotation(annotation));
+      setSelection({ ...selection, cfi, annotated: true });
+    }
+
+    const updatedConfig = updateBooknotes(bookKey, annotations);
+    if (updatedConfig) {
+      saveConfig(envConfig, bookKey, updatedConfig, settings);
+    }
+  };
+
+  const handleAnnotate = () => {
+    if (!selection || !selection.text) return;
+    const { sectionHref: href } = progress;
+    selection.href = href;
+    handleHighlight(true);
+    setNotebookVisible(true);
+    setNotebookNewAnnotation(selection);
+    handleDismissPopup();
+  };
+
+  const handleSearch = () => {
+    if (!selection || !selection.text) return;
+    handleDismissPopupAndSelection();
+
+    const term = selection.text;
+    eventDispatcher.dispatch('search-term', { term, bookKey });
+  };
+
+  const handleSendToChat = () => {
+    if (!selection || !selection.text) return;
+    setShowAnnotPopup(false);
+
+    const { book } = bookData;
+    const progress = getProgress(bookKey);
+
+    // Get current chapter title from progress
+    const chapterTitle = progress?.sectionLabel || '';
+
+    // Get surrounding text from the selection's section
+    let surroundingText = '';
+    try {
+      const view = getView(bookKey);
+      if (view && selection.range) {
+        const container = selection.range.commonAncestorContainer;
+        const parentEl = container.nodeType === Node.TEXT_NODE ? container.parentElement : container as Element;
+        if (parentEl) {
+          // Get a few sibling paragraphs for context
+          const siblings: string[] = [];
+          let el: Element | null = parentEl;
+          // Go back up to 3 siblings
+          for (let i = 0; i < 3 && el?.previousElementSibling; i++) {
+            el = el.previousElementSibling;
+            siblings.unshift(el.textContent?.trim() || '');
+          }
+          siblings.push(parentEl.textContent?.trim() || '');
+          el = parentEl;
+          // Go forward up to 3 siblings
+          for (let i = 0; i < 3 && el?.nextElementSibling; i++) {
+            el = el.nextElementSibling;
+            siblings.push(el.textContent?.trim() || '');
+          }
+          surroundingText = siblings.filter(Boolean).join('\n\n');
+        }
+      }
+    } catch {
+      // Surrounding text extraction is best-effort
+    }
+
+    useChatStore.getState().setPendingContext({
+      selectedText: selection.text,
+      surroundingText,
+      chapterTitle,
+      chapterText: '', // Full chapter text injected via system prompt
+      bookTitle: book?.title || '',
+      bookAuthor: book?.author || '',
+    });
+    useChatStore.getState().setOpen(true);
+  };
+
+  const handleStartEditAnnotation = useCallback(() => {
+    setShowAnnotPopup(false);
+  }, []);
+
+  // Keyboard shortcuts: trigger actions only if there's an active selection and popup hidden
+  useShortcuts(
+    {
+      onHighlightSelection: () => {
+        handleHighlight(false, 'highlight');
+      },
+      onUnderlineSelection: () => {
+        handleHighlight(false, 'underline');
+      },
+      onAnnotateSelection: () => {
+        handleAnnotate();
+      },
+      onSearchSelection: () => {
+        handleSearch();
+      },
+      onCopySelection: () => {
+        handleCopy(false);
+      },
+      onSendToChat: () => {
+        handleSendToChat();
+      },
+    },
+    [selection?.text],
+  );
+
+  const handleExportMarkdown = async (event: CustomEvent) => {
+    const { bookKey: exportBookKey } = event.detail;
+    if (bookKey !== exportBookKey) return;
+
+    const { bookDoc, book } = bookData;
+    if (!bookDoc || !book || !bookDoc.toc) return;
+
+    const config = getConfig(bookKey)!;
+    const { booknotes: allNotes = [] } = config;
+    const booknotes = allNotes.filter((note) => !note.deletedAt);
+    if (booknotes.length === 0) {
+      eventDispatcher.dispatch('toast', {
+        type: 'info',
+        message: _('No annotations to export'),
+        className: 'whitespace-nowrap',
+        timeout: 2000,
+      });
+      return;
+    }
+
+    // Organize booknotes into groups by chapter
+    const booknoteGroups: { [href: string]: BooknoteGroup } = {};
+    for (const booknote of booknotes) {
+      const tocItem = findTocItemBS(bookDoc.toc ?? [], booknote.cfi);
+      const href = tocItem?.href || '';
+      const label = tocItem?.label || '';
+      const id = tocItem?.id || 0;
+      if (!booknoteGroups[href]) {
+        booknoteGroups[href] = { id, href, label, booknotes: [] };
+      }
+      booknoteGroups[href].booknotes.push(booknote);
+    }
+
+    Object.values(booknoteGroups).forEach((group) => {
+      group.booknotes.sort((a, b) => {
+        return CFI.compare(a.cfi, b.cfi);
+      });
+    });
+
+    setExportData({ booknotes, booknoteGroups });
+    setShowExportDialog(true);
+  };
+
+  const handleConfirmExport = async (markdownContent: string) => {
+    const { book } = bookData;
+    if (!book) return;
+
+    setTimeout(() => {
+      // Delay to ensure it won't be overridden by system clipboard actions
+      navigator.clipboard?.writeText(markdownContent);
+    }, 100);
+
+    const filename = `${makeSafeFilename(book.title)}.md`;
+    const saved = await appService?.saveFile(filename, markdownContent, {
+      mimeType: 'text/markdown',
+    });
+    eventDispatcher.dispatch('toast', {
+      type: 'info',
+      message: saved ? _('Exported successfully') : _('Copied to clipboard'),
+      timeout: 2000,
+    });
+
+    setShowExportDialog(false);
+    setExportData(null);
+  };
+
+  const handleCancelExport = () => {
+    setShowExportDialog(false);
+    setExportData(null);
+  };
+
+  const selectionAnnotated = selection?.annotated;
+  const toolButtons = annotationToolButtons.map(({ type, label, Icon }) => {
+    switch (type) {
+      case 'copy':
+        return { tooltipText: _(label), Icon, onClick: handleCopy };
+      case 'highlight':
+        return {
+          tooltipText: selectionAnnotated ? _('Delete Highlight') : _(label),
+          Icon: selectionAnnotated ? RiDeleteBinLine : Icon,
+          onClick: handleHighlight,
+        };
+      case 'annotate':
+        return {
+          tooltipText: _(label),
+          Icon,
+          onClick: handleAnnotate,
+        };
+      case 'search':
+        return {
+          tooltipText: _(label),
+          Icon,
+          onClick: handleSearch,
+        };
+      case 'chat':
+        return { tooltipText: _(label), Icon, onClick: handleSendToChat };
+      default:
+        return { tooltipText: '', Icon, onClick: () => {} };
+    }
+  });
+
+  return (
+    <div ref={containerRef} role='toolbar' tabIndex={-1}>
+      {showAnnotPopup && trianglePosition && annotPopupPosition && (
+        <AnnotationPopup
+          bookKey={bookKey}
+          dir={viewSettings.rtl ? 'rtl' : 'ltr'}
+          isVertical={viewSettings.vertical}
+          buttons={toolButtons}
+          notes={annotationNotes}
+          position={annotPopupPosition}
+          trianglePosition={trianglePosition}
+          highlightOptionsVisible={highlightOptionsVisible}
+          selectedStyle={selectedStyle}
+          selectedColor={selectedColor}
+          popupWidth={annotPopupWidth}
+          popupHeight={annotPopupHeight}
+          onHighlight={handleHighlight}
+          onDismiss={handleDismissPopupAndSelection}
+        />
+      )}
+      {editingAnnotation && editingAnnotation.color && selection && (
+        <AnnotationRangeEditor
+          bookKey={bookKey}
+          isVertical={viewSettings.vertical}
+          annotation={editingAnnotation}
+          selection={selection}
+          handleColor={selectedColor}
+          externalDragPoint={externalDragPoint}
+          getAnnotationText={getAnnotationText}
+          setSelection={setSelection}
+          onStartEdit={handleStartEditAnnotation}
+        />
+      )}
+      {showExportDialog && exportData && bookData.book && (
+        <ExportMarkdownDialog
+          bookKey={bookKey}
+          isOpen={showExportDialog}
+          bookTitle={bookData.book.title}
+          bookAuthor={bookData.book.author || ''}
+          booknotes={exportData.booknotes}
+          booknoteGroups={exportData.booknoteGroups}
+          onCancel={handleCancelExport}
+          onExport={handleConfirmExport}
+        />
+      )}
+    </div>
+  );
+};
+
+export default Annotator;

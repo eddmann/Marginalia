@@ -1,0 +1,87 @@
+import { OsPlatform } from '@/types/system';
+import { md5 } from 'js-md5';
+
+export const uniqueId = () => Math.random().toString(36).substring(2, 9);
+
+export const getContentMd5 = (content: unknown) => md5(JSON.stringify(content));
+
+export const makeSafeFilename = (filename: string, replacement = '_') => {
+  // Windows restricted characters + control characters and reserved names
+  const unsafeCharacters = /[<>:%#"\/\\|?*\x00-\x1F]/g;
+  const reservedFilenames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+  // Unsafe to use filename including file extensions over 255 bytes on Android
+  const maxFilenameBytes = 250;
+
+  let safeName = filename.replace(unsafeCharacters, replacement);
+
+  if (reservedFilenames.test(safeName)) {
+    safeName = `${safeName}${replacement}`;
+  }
+
+  const encoder = new TextEncoder();
+  let utf8Bytes = encoder.encode(safeName);
+
+  while (utf8Bytes.length > maxFilenameBytes) {
+    safeName = safeName.slice(0, -1);
+    utf8Bytes = encoder.encode(safeName);
+  }
+
+  return safeName.trim();
+};
+
+export const getLocale = () => {
+  const locale = localStorage?.getItem('i18nextLng') || navigator?.language || '';
+  // POSIX locale values (e.g. 'C', 'C.UTF-8', 'POSIX') are not valid BCP 47
+  // tags and would cause Intl/toLocaleString to throw — fall back to en-US
+  if (!locale || /^(C|POSIX)(\..*)?$/i.test(locale)) return 'en-US';
+  return locale;
+};
+
+export const getUserLang = () => {
+  const locale = getLocale();
+  return locale.split('-')[0] || 'en';
+};
+
+export const isCJKEnv = () => {
+  const browserLanguage = navigator.language || '';
+  const uiLanguage = localStorage?.getItem('i18nextLng') || '';
+  const isCJKUI = ['zh', 'ja', 'ko'].some((lang) => uiLanguage.startsWith(lang));
+  const isCJKLocale = ['zh', 'ja', 'ko'].some((lang) => browserLanguage.startsWith(lang));
+  return isCJKLocale || isCJKUI;
+};
+
+// Note that iPad may have a user agent string like a desktop browser
+// when possible please use appService.isIOSApp || getOSPlatform() === 'ios'
+// to check if the app is running on iOS
+export const getOSPlatform = (): OsPlatform => {
+  const userAgent = navigator.userAgent.toLowerCase();
+
+  if (/iphone|ipad|ipod/.test(userAgent)) return 'ios';
+  if (userAgent.includes('android')) return 'android';
+  if (userAgent.includes('macintosh') || userAgent.includes('mac os x')) return 'macos';
+  if (userAgent.includes('windows nt')) return 'windows';
+  if (userAgent.includes('linux')) return 'linux';
+
+  return 'unknown';
+};
+
+export const isContentURI = (uri: string) => {
+  return uri.startsWith('content://');
+};
+
+export const isFileURI = (uri: string) => {
+  return uri.startsWith('file://');
+};
+
+export const isValidURL = (url: string, allowedSchemes: string[] = ['http', 'https']) => {
+  try {
+    const { protocol } = new URL(url);
+    return allowedSchemes.some((scheme) => `${scheme}:` === protocol);
+  } catch {
+    return false;
+  }
+};
+
+export const stubTranslation = (stubKey: string) => {
+  return stubKey;
+};

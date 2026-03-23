@@ -1,0 +1,78 @@
+import React from 'react';
+
+import { Insets } from '@/types/misc';
+import { BookSearchMatch, BookSearchResult } from '@/types/book';
+import { useTranslation } from '@/hooks/useTranslation';
+import { useReaderStore } from '@/store/readerStore';
+import { useSearchNav } from '../../hooks/useSearchNav';
+import ContentNavBar from './ContentNavBar';
+
+interface SearchResultsNavProps {
+  bookKey: string;
+  gridInsets: Insets;
+}
+
+const SearchResultsNav: React.FC<SearchResultsNavProps> = ({ bookKey, gridInsets }) => {
+  const {
+    searchTerm,
+    searchProgress,
+    currentSection,
+    showSearchNav,
+    hasPreviousPage,
+    hasNextPage,
+    handleShowResults,
+    handleCloseSearch,
+    handlePreviousResult,
+    handleNextResult,
+  } = useSearchNav(bookKey);
+  const _ = useTranslation();
+  const { hoveredBookKey } = useReaderStore();
+
+  if (!showSearchNav || hoveredBookKey === bookKey) {
+    return null;
+  }
+
+  return (
+    <ContentNavBar
+      bookKey={bookKey}
+      gridInsets={gridInsets}
+      title={_("Search results for '{{term}}'", { term: searchTerm })}
+      section={currentSection}
+      progress={searchProgress}
+      hasPrevious={hasPreviousPage}
+      hasNext={hasNextPage}
+      previousTitle={_('Previous Result')}
+      nextTitle={_('Next Result')}
+      showResultsTitle={_('Show Search Results')}
+      closeTitle={_('Close Search')}
+      onShowResults={handleShowResults}
+      onClose={handleCloseSearch}
+      onPrevious={handlePreviousResult}
+      onNext={handleNextResult}
+    />
+  );
+};
+
+export default SearchResultsNav;
+
+// Helper function to flatten search results into a single array of matches with section labels
+export function flattenSearchResults(
+  results: BookSearchResult[] | BookSearchMatch[],
+): { cfi: string; sectionLabel: string }[] {
+  const flattened: { cfi: string; sectionLabel: string }[] = [];
+
+  for (const result of results) {
+    if ('subitems' in result) {
+      // BookSearchResult with subitems
+      for (const item of result.subitems) {
+        flattened.push({ cfi: item.cfi, sectionLabel: result.label });
+      }
+    } else {
+      // BookSearchMatch
+      flattened.push({ cfi: result.cfi, sectionLabel: '' });
+    }
+  }
+
+  return flattened;
+}
+

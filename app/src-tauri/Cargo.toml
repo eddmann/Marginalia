@@ -1,0 +1,52 @@
+[package]
+name = "marginalia"
+version = "0.0.1"
+description = "A desktop ebook reader with a built-in AI companion"
+authors = ["Edd Mann <the@eddmann.com>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/eddmann/Marginalia"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "marginalialib"
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[features]
+cargo-clippy = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+thiserror = "2"
+walkdir = "2"
+tokio = { version = "1", features = ["fs"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures-util = "0.3"
+futures = "0.3.31"
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "stream",
+] }
+tauri = { version = "2", features = [ "protocol-asset" ] }
+tauri-build = "2"
+tauri-plugin-log = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-os = "2"
+tauri-plugin-http = { version = "2", features = ["dangerous-settings", "unsafe-headers"] }
+
+tauri-plugin-process = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-persisted-scope = "2"
+
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-cli = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
