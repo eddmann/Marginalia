@@ -43,6 +43,7 @@ AI chat:
 - Select text, click "Ask AI" to discuss it
 - Full chapter text included as context
 - Multiple conversations per book, persisted across sessions
+- Web search for real-world context beyond the book
 - Claude Opus 4.6, Claude Sonnet 4.6 (via Claude Code Max)
 - GPT-5.4 (via Codex CLI)
 - Auto-loads auth tokens from Claude Code and Codex CLI

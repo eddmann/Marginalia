@@ -4,6 +4,7 @@ import { getModel } from '@mariozechner/pi-ai';
 import type { UserMessage, AssistantMessage } from '@mariozechner/pi-ai';
 import { createTauriStreamFn } from './tauriFetch';
 import type { ChatMessage } from './chatPersistence';
+export { webSearchTool } from './tools/webSearch';
 
 export function createReadingAgent(config: {
   provider: string;
@@ -30,6 +31,7 @@ export function buildSystemPrompt(opts: {
   bookAuthor: string;
   chapterTitle: string;
   chapterText: string;
+  webSearchEnabled: boolean;
 }): string {
   const parts = [
     `You are a reading companion for "${opts.bookTitle}" by ${opts.bookAuthor}.`,
@@ -46,6 +48,13 @@ export function buildSystemPrompt(opts: {
     'When the reader shares a passage, explain it clearly and answer follow-up questions.',
     opts.chapterText ? 'You have the full chapter text above for reference.' : '',
   );
+
+  if (opts.webSearchEnabled) {
+    parts.push(
+      '',
+      'You have a web_search tool. Use it when the reader asks about real-world context, historical facts, people, or topics not fully covered in the book text. Do not search for things you can answer from the chapter text alone.',
+    );
+  }
 
   return parts.filter(Boolean).join('\n');
 }

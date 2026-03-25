@@ -26,6 +26,7 @@ interface ChatState {
 
   provider: string;
   modelId: string;
+  webSearchEnabled: boolean;
 
   togglePanel: () => void;
   setOpen: (open: boolean) => void;
@@ -36,6 +37,7 @@ interface ChatState {
   setBookHash: (hash: string) => void;
   setConversationId: (id: string) => void;
   setModel: (provider: string, modelId: string) => void;
+  setWebSearchEnabled: (enabled: boolean) => void;
 }
 
 function generateId(): string {
@@ -60,6 +62,7 @@ export const useChatStore = create<ChatState>()(
 
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
+      webSearchEnabled: false,
 
       togglePanel: () => set((s) => ({ isOpen: !s.isOpen })),
       setOpen: (open) => set({ isOpen: open }),
@@ -71,6 +74,7 @@ export const useChatStore = create<ChatState>()(
       setBookHash: (hash) => set({ bookHash: hash }),
       setConversationId: (id) => set({ conversationId: id }),
       setModel: (provider, modelId) => set({ provider, modelId }),
+      setWebSearchEnabled: (enabled) => set({ webSearchEnabled: enabled }),
     }),
     {
       name: 'marginalia-chat',
@@ -80,6 +84,7 @@ export const useChatStore = create<ChatState>()(
         panelWidth: state.panelWidth,
         provider: state.provider,
         modelId: state.modelId,
+        webSearchEnabled: state.webSearchEnabled,
       }),
     },
   ),

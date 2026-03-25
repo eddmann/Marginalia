@@ -33,11 +33,10 @@ function installTauriFetchProxy(): void {
 
     if (!isLocalUrl(url) && init) {
       const cleaned = new Headers();
-      if (init.headers instanceof Headers) {
-        init.headers.forEach((v, k) => {
-          if (!STRIP_HEADERS.has(k.toLowerCase())) cleaned.set(k, v);
-        });
-      }
+      const source = new Headers(init.headers);
+      source.forEach((v, k) => {
+        if (!STRIP_HEADERS.has(k.toLowerCase())) cleaned.set(k, v);
+      });
       // Empty origin so the plugin removes it (requires unsafe-headers feature)
       cleaned.set('origin', '');
 

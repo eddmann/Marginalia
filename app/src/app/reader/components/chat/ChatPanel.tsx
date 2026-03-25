@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { FiSend, FiX, FiTrash2, FiPlus, FiCode } from 'react-icons/fi';
+import { FiSend, FiX, FiTrash2, FiPlus, FiCode, FiSearch, FiGlobe } from 'react-icons/fi';
 import { BsPin, BsPinFill } from 'react-icons/bs';
 import clsx from 'clsx';
 import DOMPurify from 'dompurify';
@@ -11,7 +11,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useApiKeyStore } from '@/store/apiKeyStore';
 import { useSidebarStore } from '@/store/sidebarStore';
 
-import { createReadingAgent, buildSystemPrompt, buildUserMessageWithContext, chatMessagesToAgentMessages } from '@/services/pi/agent';
+import { createReadingAgent, buildSystemPrompt, buildUserMessageWithContext, chatMessagesToAgentMessages, webSearchTool } from '@/services/pi/agent';
 import {
   saveMessages,
   loadMessages,
@@ -36,9 +36,9 @@ const ChatPanel: React.FC = () => {
     pendingContext, currentChapter,
     bookTitle, bookAuthor, bookHash, currentChapterText,
     conversationId,
-    provider, modelId,
+    provider, modelId, webSearchEnabled,
     setOpen, setPinned, setPanelWidth, setPendingContext,
-    setConversationId,
+    setConversationId, setWebSearchEnabled,
   } = useChatStore();
 
   const isResizing = useRef(false);
@@ -74,6 +74,7 @@ const ChatPanel: React.FC = () => {
   const [streamingContent, setStreamingContent] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showInspect, setShowInspect] = useState(false);
+  const [activeTool, setActiveTool] = useState<string | null>(null);
 
   const agentRef = useRef<Agent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -185,7 +186,9 @@ const ChatPanel: React.FC = () => {
       bookAuthor,
       chapterTitle: currentChapter,
       chapterText: currentChapterText,
+      webSearchEnabled,
     }));
+    agent.setTools(webSearchEnabled ? [webSearchTool] : []);
 
     // Build full context message for the AI (includes surrounding text, chapter refs)
     const aiContent = buildUserMessageWithContext(
@@ -238,18 +241,30 @@ const ChatPanel: React.FC = () => {
               .map((c) => c.text)
               .join('');
           }
+          // Skip tool-call-only messages (no text) — the real response comes after tool execution
+          if (!textContent) {
+            accumulatedText = '';
+            return;
+          }
           setMessages((prev) => [...prev, {
             role: 'assistant',
-            content: textContent || '(empty response)',
+            content: textContent,
             timestamp: Date.now(),
           }]);
           setStreamingContent('');
           setIsStreaming(false);
         }
       }
+      if (event.type === 'tool_execution_start') {
+        setActiveTool(event.toolName);
+      }
+      if (event.type === 'tool_execution_end') {
+        setActiveTool(null);
+      }
       if (event.type === 'agent_end') {
         setStreamingContent('');
         setIsStreaming(false);
+        setActiveTool(null);
       }
     });
 
@@ -454,11 +469,17 @@ const ChatPanel: React.FC = () => {
             </div>
           </div>
         )}
-        {isStreaming && !streamingContent && (
+        {isStreaming && !streamingContent && !activeTool && (
           <div className='chat chat-start'>
             <div className='chat-bubble bg-base-200 text-base-content text-sm'>
               <span className='loading loading-dots loading-xs' />
             </div>
+          </div>
+        )}
+        {activeTool && (
+          <div className='flex items-center gap-2 text-xs text-base-content/50 px-1 py-1'>
+            <FiSearch size={12} className='animate-pulse' />
+            <span>Searching the web&hellip;</span>
           </div>
         )}
         {error && (
@@ -488,7 +509,17 @@ const ChatPanel: React.FC = () => {
 
       {/* Input */}
       <div className='border-t border-base-300 px-3 py-2'>
-        <div className='flex items-center gap-2 rounded-lg border border-base-300 bg-base-100 px-3 py-2 focus-within:border-primary'>
+        <div className='flex items-center gap-2 rounded-lg border border-base-300 bg-base-100 px-2 py-2 focus-within:border-primary'>
+          <button
+            className={clsx(
+              'btn btn-xs btn-circle shrink-0',
+              webSearchEnabled ? 'bg-primary/20 text-primary hover:bg-primary/30 border-0' : 'btn-ghost text-base-content/40',
+            )}
+            onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+            title={webSearchEnabled ? 'Disable web search' : 'Enable web search'}
+          >
+            <FiGlobe size={13} />
+          </button>
           <textarea
             ref={inputRef}
             className='flex-1 resize-none bg-transparent text-sm outline-none min-h-[20px] max-h-[120px] placeholder:text-base-content/40'
@@ -530,6 +561,7 @@ const ChatPanel: React.FC = () => {
             bookAuthor,
             chapterTitle: currentChapter,
             chapterText: currentChapterText,
+            webSearchEnabled,
           })}
           messages={agentRef.current?.state?.messages ?? []}
           pendingUserMessage={buildUserMessageWithContext(
