@@ -1,7 +1,7 @@
 import { BookMetadata, EXTS } from '@/libs/document';
 import { Book, BookConfig, BookProgress, WritingMode } from '@/types/book';
 import { SUPPORTED_LANGS } from '@/services/constants';
-import { getLocale, getUserLang, makeSafeFilename } from './misc';
+import { getUserLang, makeSafeFilename } from './misc';
 
 import { getDirFromLanguage } from './rtl';
 import { code6392to6391, isValidLang, normalizedLangCode } from './lang';

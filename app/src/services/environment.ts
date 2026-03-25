@@ -1,5 +1,5 @@
 import { AppService } from '@/types/system';
-import { MARGINALIA_NODE_BASE_URL, MARGINALIA_WEB_BASE_URL } from './constants';
+import { MARGINALIA_WEB_BASE_URL } from './constants';
 
 declare global {
   interface Window {
@@ -12,7 +12,6 @@ export const isWebAppPlatform = () => false;
 export const hasCli = () => window.__MARGINALIA_CLI_ACCESS === true;
 export const isPWA = () => window.matchMedia('(display-mode: standalone)').matches;
 const getBaseUrl = () => MARGINALIA_WEB_BASE_URL;
-const getNodeBaseUrl = () => MARGINALIA_NODE_BASE_URL;
 
 const isMacPlatform = () =>
   typeof window !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);

@@ -245,31 +245,3 @@ export function renderNoteTemplate(template: string, data: NoteTemplateData): st
   }
 }
 
-/**
- * Validates a template string by attempting to compile it
- * @param template The template string to validate
- * @returns An object with isValid flag and optional error message
- */
-function validateNoteTemplate(template: string): { isValid: boolean; error?: string } {
-  try {
-    env.renderString(template, {
-      title: '',
-      author: '',
-      exportDate: '',
-      chapters: [],
-    });
-    return { isValid: true };
-  } catch (error) {
-    return {
-      isValid: false,
-      error: error instanceof Error ? error.message : 'Unknown template error',
-    };
-  }
-}
-
-/**
- * Get the nunjucks environment instance for advanced use cases
- */
-function getNunjucksEnv(): nunjucks.Environment {
-  return env;
-}
