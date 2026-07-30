@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { FiSend, FiX, FiTrash2, FiPlus, FiCode, FiSearch, FiGlobe } from 'react-icons/fi';
+import { FiSend, FiX, FiTrash2, FiPlus, FiCode, FiSearch, FiGlobe, FiBookmark } from 'react-icons/fi';
 import { BsPin, BsPinFill } from 'react-icons/bs';
 import clsx from 'clsx';
 import DOMPurify from 'dompurify';
@@ -10,6 +10,14 @@ import { marked } from 'marked';
 import { useChatStore } from '@/store/chatStore';
 import { useApiKeyStore } from '@/store/apiKeyStore';
 import { useSidebarStore } from '@/store/sidebarStore';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useBookDataStore } from '@/store/bookDataStore';
+import { useReaderStore } from '@/store/readerStore';
+import { useEnv } from '@/context/EnvContext';
+import { eventDispatcher } from '@/utils/event';
+import { uniqueId } from '@/utils/misc';
+import { NOTE_PREFIX } from '@/types/view';
+import type { BookNote } from '@/types/book';
 
 import { createReadingAgent, buildSystemPrompt, buildUserMessageWithContext, chatMessagesToAgentMessages, webSearchTool } from '@/services/pi/agent';
 import {
@@ -30,6 +38,11 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
 }
 
+const SUMMARY_PROMPT =
+  'Based on our conversation above about this passage, write a concise study note ' +
+  '(2-4 sentences) capturing what I asked and the key takeaways, in the same language ' +
+  'as our conversation. Return only the note text, with no preamble.';
+
 const ChatPanel: React.FC = () => {
   const {
     isOpen, isPinned, panelWidth,
@@ -45,11 +58,18 @@ const ChatPanel: React.FC = () => {
 
   const handleResizeStart = (e: ReactPointerEvent) => {
     e.preventDefault();
+    // Capture the pointer on the handle so move/up events are still delivered
+    // even while the pointer is over the book iframe — otherwise releasing over
+    // the reader leaves the drag "stuck" (pointerup never reaches us).
+    const handle = e.currentTarget as HTMLElement;
+    const pointerId = e.pointerId;
+    handle.setPointerCapture?.(pointerId);
     isResizing.current = true;
     const startX = e.clientX;
     const startWidth = panelWidth;
 
     const onMove = (ev: globalThis.PointerEvent) => {
+      if (!isResizing.current) return;
       const delta = startX - ev.clientX;
       const newWidth = Math.max(280, Math.min(800, startWidth + delta));
       setPanelWidth(newWidth);
@@ -57,16 +77,27 @@ const ChatPanel: React.FC = () => {
 
     const onUp = () => {
       isResizing.current = false;
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
+      handle.releasePointerCapture?.(pointerId);
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
     };
 
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
   };
 
   const { getKey, loadExternalTokens } = useApiKeyStore();
   const { sideBarBookKey } = useSidebarStore();
+  const { settings } = useSettingsStore();
+  const { getConfig, updateBooknotes, saveConfig } = useBookDataStore();
+  const { getView } = useReaderStore();
+  const { envConfig } = useEnv();
+  const [savingNote, setSavingNote] = useState(false);
+  // Passages already saved as a note in this session — hides the button so it
+  // doesn't linger after a successful save.
+  const [savedCfis, setSavedCfis] = useState<Set<string>>(new Set());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversations, setConversations] = useState<ConversationMeta[]>([]);
   const [input, setInput] = useState('');
@@ -173,6 +204,10 @@ const ChatPanel: React.FC = () => {
     if (!text && !pendingContext) return;
     if (isStreaming) return;
 
+    // Re-read the token in case Claude Code rotated it since the app started —
+    // otherwise a long-running session keeps using a stale (expired) token.
+    await loadExternalTokens();
+
     const apiKey = getKey(provider);
     if (!apiKey) {
       setError(`No auth token found for ${provider}. Make sure Claude Code or Codex CLI is logged in.`);
@@ -209,6 +244,8 @@ const ChatPanel: React.FC = () => {
         selection: {
           text: pendingContext.selectedText,
           chapter: pendingContext.chapterTitle,
+          cfi: pendingContext.cfi,
+          page: pendingContext.page,
         },
       } : {}),
     };
@@ -234,6 +271,16 @@ const ChatPanel: React.FC = () => {
       if (event.type === 'message_end') {
         const msg = event.message;
         if (msg.role === 'assistant') {
+          // Surface stream/API errors (e.g. 401) instead of silently ending.
+          if (msg.stopReason === 'error') {
+            setError(
+              msg.errorMessage ||
+                'The AI request failed. Your login token may have expired — reopen the app or run `claude auth login`.',
+            );
+            setStreamingContent('');
+            setIsStreaming(false);
+            return;
+          }
           let textContent = accumulatedText;
           if (!textContent) {
             textContent = msg.content
@@ -280,8 +327,98 @@ const ChatPanel: React.FC = () => {
     }
   };
 
+  /** The passage this conversation is anchored to (from the first selection). */
+  const noteAnchor = (): { cfi: string; text: string; page?: number } | null => {
+    // Anchor to the MOST RECENT selection in the conversation — a chat can span
+    // several passages (each selection auto-attaches), and the note should be
+    // about the one currently being discussed, not the first one.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role === 'user' && m.selection?.cfi && m.selection.text) {
+        return { cfi: m.selection.cfi, text: m.selection.text, page: m.selection.page };
+      }
+    }
+    return null;
+  };
+
+  const currentAnchor = noteAnchor();
+  const canSaveNote =
+    !!sideBarBookKey &&
+    !!currentAnchor &&
+    !savedCfis.has(currentAnchor.cfi) &&
+    messages.some((m) => m.role === 'assistant') &&
+    !isStreaming;
+
+  /** Ask the AI to summarise the discussion and save it as a note on the passage. */
+  const handleSaveAsNote = async () => {
+    const anchor = noteAnchor();
+    const agent = agentRef.current;
+    if (!anchor || !sideBarBookKey || !agent || savingNote) return;
+    setSavingNote(true);
+    setError(null);
+    try {
+      let summary = '';
+      const unsubscribe = agent.subscribe((event: AgentEvent) => {
+        if (event.type === 'message_update') {
+          const ame = event.assistantMessageEvent;
+          if (ame.type === 'text_delta') {
+            summary += (ame as { type: 'text_delta'; delta: string }).delta;
+          }
+        }
+      });
+      try {
+        await agent.prompt(SUMMARY_PROMPT);
+      } finally {
+        unsubscribe();
+      }
+      summary = summary.trim();
+      if (!summary) throw new Error('The AI returned an empty summary.');
+
+      const config = getConfig(sideBarBookKey);
+      if (!config) throw new Error('Book configuration is unavailable.');
+      const { booknotes: annotations = [] } = config;
+
+      const style = settings.globalReadSettings.highlightStyle;
+      const color = settings.globalReadSettings.highlightStyles[style];
+      const annotation: BookNote = {
+        id: uniqueId(),
+        type: 'annotation',
+        cfi: anchor.cfi,
+        style,
+        color,
+        text: anchor.text,
+        note: summary,
+        page: anchor.page,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      getView(sideBarBookKey)?.addAnnotation({
+        ...annotation,
+        value: `${NOTE_PREFIX}${annotation.cfi}`,
+      });
+      annotations.push(annotation);
+      const updated = updateBooknotes(sideBarBookKey, annotations);
+      if (updated) saveConfig(envConfig, sideBarBookKey, updated, settings);
+
+      // Hide the button now that this passage has a saved note.
+      setSavedCfis((prev) => new Set(prev).add(anchor.cfi));
+
+      eventDispatcher.dispatch('toast', {
+        message: 'Saved AI summary as a note',
+        type: 'success',
+        timeout: 2000,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Ignore Enter while an IME is composing (e.g. picking a pinyin candidate),
+    // otherwise the half-typed text gets sent.
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSend();
     }
@@ -432,9 +569,12 @@ const ChatPanel: React.FC = () => {
           <div key={i} className={clsx('chat', msg.role === 'user' ? 'chat-end' : 'chat-start')}>
             <div
               className={clsx(
-                'chat-bubble text-sm',
-                msg.role === 'user' ? 'chat-bubble-primary' : 'chat-bubble bg-base-200 text-base-content',
+                'chat-bubble text-sm !select-text',
+                msg.role === 'user'
+                  ? 'chat-bubble-primary selection:bg-white/30'
+                  : 'chat-bubble bg-base-200 text-base-content',
               )}
+              style={{ WebkitUserSelect: 'text', userSelect: 'text' }}
             >
               {msg.role === 'user' ? (
                 <div>
@@ -504,6 +644,24 @@ const ChatPanel: React.FC = () => {
               <FiX size={12} />
             </button>
           </div>
+        </div>
+      )}
+
+      {canSaveNote && (
+        <div className='border-t border-base-300 px-3 pt-2'>
+          <button
+            className='btn btn-sm btn-ghost text-primary w-full justify-center gap-2'
+            onClick={handleSaveAsNote}
+            disabled={savingNote}
+            title='Summarise this discussion and save it as a note on the passage'
+          >
+            {savingNote ? (
+              <span className='loading loading-spinner loading-xs' />
+            ) : (
+              <FiBookmark size={14} />
+            )}
+            {savingNote ? 'Saving note…' : 'Save AI summary as note'}
+          </button>
         </div>
       )}
 

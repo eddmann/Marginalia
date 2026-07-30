@@ -19,6 +19,9 @@ interface ChatMessage {
   selection?: {
     text: string;
     chapter: string;
+    /** Location of the selection, so an AI summary can be saved as a note there. */
+    cfi?: string;
+    page?: number;
   };
 }
 

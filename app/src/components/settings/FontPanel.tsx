@@ -195,8 +195,12 @@ const FontPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterReset 
   useEffect(() => {
     if (isTauriAppPlatform() && appService && !appService.isAndroidApp) {
       getSysFontsList().then((res) => {
-        if (res.error || Object.keys(res.fonts).length === 0) {
-          console.error('Failed to get system fonts list:', res.error);
+        if (res.error) {
+          console.warn('System fonts list unavailable:', res.error);
+          return;
+        }
+        // No native font list on this platform/build — fall back silently.
+        if (Object.keys(res.fonts).length === 0) {
           return;
         }
         const processedFonts: string[] = [];

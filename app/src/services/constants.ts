@@ -230,7 +230,7 @@ export const DEFAULT_VIEW_CONFIG: ViewConfig = {
   progressStyle: 'fraction',
   progressInfoMode: 'all',
 
-  animated: false,
+  animated: true,
   isEink: false,
   isColorEink: false,
 
@@ -275,7 +275,7 @@ export const DEFAULT_BOOK_SEARCH_CONFIG: BookSearchConfig = {
   matchDiacritics: false,
 };
 
-export const SYSTEM_SETTINGS_VERSION = 1;
+export const SYSTEM_SETTINGS_VERSION = 2;
 
 export const SERIF_FONTS = [
   'Bitter',
