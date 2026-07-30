@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import { IoFileTray } from 'react-icons/io5';
+import { IoLogoGithub } from 'react-icons/io5';
 import { useTranslation } from '@/hooks/useTranslation';
 import MenuItem from '@/components/MenuItem';
 import Menu from '@/components/Menu';
@@ -8,12 +9,14 @@ interface ImportMenuProps {
   setIsDropdownOpen?: (open: boolean) => void;
   onImportBooksFromFiles: () => void;
   onImportBooksFromDirectory?: () => void;
+  onImportBooksFromGithub?: () => void;
 }
 
 const ImportMenu: React.FC<ImportMenuProps> = ({
   setIsDropdownOpen,
   onImportBooksFromFiles,
   onImportBooksFromDirectory,
+  onImportBooksFromGithub,
 }) => {
   const _ = useTranslation();
 
@@ -24,6 +27,11 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
 
   const handleImportFromDirectory = () => {
     onImportBooksFromDirectory?.();
+    setIsDropdownOpen?.(false);
+  };
+
+  const handleImportFromGithub = () => {
+    onImportBooksFromGithub?.();
     setIsDropdownOpen?.(false);
   };
 
@@ -42,6 +50,13 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
           label={_('From Directory')}
           Icon={<IoFileTray className='h-5 w-5' />}
           onClick={handleImportFromDirectory}
+        />
+      )}
+      {onImportBooksFromGithub && (
+        <MenuItem
+          label={_('From GitHub URL')}
+          Icon={<IoLogoGithub className='h-5 w-5' />}
+          onClick={handleImportFromGithub}
         />
       )}
     </Menu>
