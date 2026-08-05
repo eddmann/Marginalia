@@ -109,6 +109,20 @@ const ChatPanel: React.FC = () => {
 
   const agentRef = useRef<Agent | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // IME composition guard. On WebKit `compositionend` can fire just before the
+  // confirming Enter's keydown, so we reset on the next tick to still swallow
+  // that Enter (picking a pinyin candidate must not send the message).
+  const composingRef = useRef(false);
+  // Whether to keep following new content. Turns off when the user scrolls up,
+  // back on when they scroll (or we jump) to the bottom.
+  const stickToBottomRef = useRef(true);
+
+  const handleMessagesScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const currentBookHash = useRef<string>('');
 
@@ -150,9 +164,12 @@ const ChatPanel: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sideBarBookKey, setConversationId]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom only while the user is following at the bottom.
+  // Instant (not smooth) so streaming updates don't fight the scroll detector.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (stickToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ block: 'end' });
+    }
   }, [messages, streamingContent]);
 
   // Focus input when panel opens
@@ -249,6 +266,7 @@ const ChatPanel: React.FC = () => {
         },
       } : {}),
     };
+    stickToBottomRef.current = true; // follow again when the user sends
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
@@ -418,7 +436,13 @@ const ChatPanel: React.FC = () => {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Ignore Enter while an IME is composing (e.g. picking a pinyin candidate),
     // otherwise the half-typed text gets sent.
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (
+      e.key === 'Enter' &&
+      !e.shiftKey &&
+      !e.nativeEvent.isComposing &&
+      !composingRef.current &&
+      e.keyCode !== 229
+    ) {
       e.preventDefault();
       handleSend();
     }
@@ -559,7 +583,11 @@ const ChatPanel: React.FC = () => {
       </div>
 
       {/* Messages */}
-      <div className='flex-1 overflow-y-auto px-3 py-2 space-y-3 select-text'>
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleMessagesScroll}
+        className='flex-1 overflow-y-auto px-3 py-2 space-y-3 select-text'
+      >
         {messages.length === 0 && !streamingContent && (
           <div className='flex items-center justify-center h-full text-base-content/30 text-sm'>
             Select text and send to chat, or ask a question
@@ -689,6 +717,16 @@ const ChatPanel: React.FC = () => {
               e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
             }}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              // Reset on the next tick so the Enter that confirmed the candidate
+              // (fired right after this event) is still treated as composing.
+              setTimeout(() => {
+                composingRef.current = false;
+              }, 0);
+            }}
             rows={1}
             disabled={isStreaming}
           />
