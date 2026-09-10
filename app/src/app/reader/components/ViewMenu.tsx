@@ -75,6 +75,9 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ bookKey, setIsDropdownOpen }) => {
     );
     getView(bookKey)?.renderer.setStyles?.(getStyles(viewSettings!));
     setViewSettings(bookKey, viewSettings!);
+    // Close the menu once the mode has actually been applied (closing earlier
+    // would unmount this component before the switch takes effect).
+    setIsDropdownOpen?.(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isScrolledMode]);
 

@@ -16,6 +16,36 @@ const STRIP_HEADERS = new Set([
   'origin',
 ]);
 
+const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/**
+ * Claude Code OAuth tokens are only accepted by the Anthropic API when the
+ * request's `system` field is an ARRAY whose FIRST block is exactly the Claude
+ * Code identity string (a concatenated single string is rejected with a
+ * disguised 429). The app's real reading-companion instructions ride along in
+ * the following block. Rewrites the outgoing request body to satisfy this.
+ */
+function withClaudeCodeSystem(body: string): string {
+  try {
+    const json = JSON.parse(body) as { system?: unknown };
+    const identity = { type: 'text', text: CLAUDE_CODE_IDENTITY };
+    const sys = json.system;
+    const first = Array.isArray(sys) && sys.length > 0 ? sys[0] : undefined;
+    const firstText = typeof first === 'string' ? first : (first as { text?: string })?.text;
+    if (firstText === CLAUDE_CODE_IDENTITY) return body; // already prefixed
+    if (typeof sys === 'string') {
+      json.system = sys ? [identity, { type: 'text', text: sys }] : [identity];
+    } else if (Array.isArray(sys)) {
+      json.system = [identity, ...sys];
+    } else {
+      json.system = [identity];
+    }
+    return JSON.stringify(json);
+  } catch {
+    return body;
+  }
+}
+
 function isLocalUrl(url: string): boolean {
   return url.startsWith('/') || url.includes('localhost') || url.includes('127.0.0.1');
 }
@@ -40,7 +70,12 @@ function installTauriFetchProxy(): void {
       // Empty origin so the plugin removes it (requires unsafe-headers feature)
       cleaned.set('origin', '');
 
-      return tauriFetch(url, { ...init, headers: cleaned });
+      let body = init.body;
+      if (url.includes('api.anthropic.com') && typeof init.body === 'string') {
+        body = withClaudeCodeSystem(init.body);
+      }
+
+      return tauriFetch(url, { ...init, headers: cleaned, body });
     }
 
     return originalFetch(input, init);

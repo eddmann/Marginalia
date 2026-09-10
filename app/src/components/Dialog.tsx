@@ -27,6 +27,8 @@ interface DialogProps {
   bgClassName?: string;
   boxClassName?: string;
   contentClassName?: string;
+  /** Render a centered, content-height card instead of a full-screen sheet. */
+  compact?: boolean;
   onClose: () => void;
 }
 
@@ -42,6 +44,7 @@ const Dialog: React.FC<DialogProps> = ({
   bgClassName,
   boxClassName,
   contentClassName,
+  compact = false,
   onClose,
 }) => {
   const _ = useTranslation();
@@ -200,11 +203,16 @@ const Dialog: React.FC<DialogProps> = ({
       />
       <div
         className={clsx(
-          'modal-box settings-content absolute z-20 flex flex-col rounded-none rounded-tl-2xl rounded-tr-2xl p-0 sm:rounded-2xl',
-          'h-full max-h-full w-full max-w-full',
-          window.innerWidth < window.innerHeight
-            ? 'sm:h-[50%] sm:w-3/4'
-            : 'sm:h-[65%] sm:w-1/2 sm:max-w-[600px]',
+          'modal-box settings-content absolute z-20 flex flex-col p-0',
+          compact
+            ? 'inset-0 m-auto h-auto w-[92vw] max-w-[34rem] rounded-2xl !overflow-hidden !max-h-[85vh]'
+            : clsx(
+                'rounded-none rounded-tl-2xl rounded-tr-2xl sm:rounded-2xl',
+                'h-full max-h-full w-full max-w-full',
+                window.innerWidth < window.innerHeight
+                  ? 'sm:h-[50%] sm:w-3/4'
+                  : 'sm:h-[65%] sm:w-1/2 sm:max-w-[600px]',
+              ),
           boxClassName,
         )}
         style={{
@@ -212,7 +220,7 @@ const Dialog: React.FC<DialogProps> = ({
             appService?.hasSafeAreaInset && isFullHeightInMobile
               ? `${Math.max(safeAreaInsets?.top || 0, systemUIVisible ? statusBarHeight : 0)}px`
               : '0px',
-          ...(isMobile
+          ...(!compact && isMobile
             ? snapHeight
               ? { height: `${snapHeight * 100}%`, top: 'auto', bottom: 0 }
               : { height: '100%', bottom: 0 }
@@ -224,6 +232,7 @@ const Dialog: React.FC<DialogProps> = ({
           className={clsx(
             'drag-handle h-10 max-h-10 min-h-10 w-full cursor-row-resize items-center justify-center',
             'transition-padding-top flex duration-300 ease-out sm:hidden',
+            compact && 'hidden',
           )}
           onMouseDown={handleDragStart}
           onTouchStart={handleDragStart}

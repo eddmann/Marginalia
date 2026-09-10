@@ -63,6 +63,40 @@ export class TxtToEpubConverter {
     return await this.convertLargeFile(options);
   }
 
+  /**
+   * Build an EPUB from an explicit, ordered list of chapters. Unlike `convert`,
+   * the chapter boundaries are supplied by the caller (e.g. one markdown file
+   * per chapter), so no heuristic splitting is done. `content` must be
+   * well-formed XHTML; titles are escaped here.
+   */
+  public async convertChapters(input: {
+    chapters: { title: string; content: string }[];
+    bookTitle: string;
+    author?: string;
+    language?: string;
+    identifier?: string;
+  }): Promise<File> {
+    if (input.chapters.length === 0) {
+      throw new Error('No chapters to convert.');
+    }
+    const metadata: Metadata = {
+      bookTitle: input.bookTitle,
+      author: input.author ?? '',
+      language: input.language ?? 'en',
+      identifier: input.identifier ?? input.bookTitle,
+    };
+    const chapters: Chapter[] = input.chapters.map((c) => ({
+      title: escapeXml(c.title),
+      content: c.content,
+      isVolume: false,
+    }));
+    const blob = await this.createEpub(chapters, metadata);
+    // Wrap via ArrayBuffer (a universal BlobPart) rather than the Blob itself,
+    // so the File is constructed correctly across environments.
+    const buffer = await blob.arrayBuffer();
+    return new File([buffer], `${input.bookTitle}.epub`, { type: 'application/epub+zip' });
+  }
+
   private async convertSmallFile(options: Txt2EpubOptions): Promise<ConversionResult> {
     const { file: txtFile, author: providedAuthor, language: providedLanguage } = options;
 

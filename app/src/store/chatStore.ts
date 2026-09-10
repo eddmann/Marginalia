@@ -8,6 +8,9 @@ interface ChatContext {
   chapterText: string;
   bookTitle: string;
   bookAuthor: string;
+  /** Location of the selection, so a note can later be anchored back to it. */
+  cfi?: string;
+  page?: number;
 }
 
 interface ChatState {
@@ -48,7 +51,9 @@ export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
       isOpen: false,
-      isPinned: false,
+      // Default to docked (push/reflow) so the chat sits beside the book as a
+      // right column instead of floating over it.
+      isPinned: true,
       panelWidth: 380,
       pendingContext: null,
 
@@ -78,6 +83,14 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: 'marginalia-chat',
+      version: 1,
+      // v1: dock the chat by default. One-time reset of the old floating
+      // default for users who never explicitly chose; later toggles persist.
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Partial<ChatState>;
+        if (version < 1) state.isPinned = true;
+        return state as unknown as ChatState;
+      },
       partialize: (state) => ({
         isOpen: state.isOpen,
         isPinned: state.isPinned,

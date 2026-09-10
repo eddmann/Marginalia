@@ -79,6 +79,11 @@ export async function loadSettings(ctx: Context): Promise<SystemSettings> {
     ...getDefaultViewSettings(ctx),
     ...settings.globalViewSettings,
   };
+  // v2 migration: enable page-turn animation for installs created before it
+  // became the default (there is no UI toggle, so this is safe to force once).
+  if (version < 2) {
+    settings.globalViewSettings.animated = true;
+  }
   settings.localBooksDir = await ctx.fs.getPrefix('Books');
 
   return settings;

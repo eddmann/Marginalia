@@ -620,56 +620,88 @@ const Annotator: React.FC<{ bookKey: string }> = ({ bookKey }) => {
     eventDispatcher.dispatch('search-term', { term, bookKey });
   };
 
+  const chatIsOpen = useChatStore((s) => s.isOpen);
+
+  const sendSelectionToChat = useCallback(
+    (sel: TextSelection, open: boolean) => {
+      if (!sel?.text) return;
+      const { book } = bookData;
+      const progress = getProgress(bookKey);
+
+      // Get current chapter title from progress
+      const chapterTitle = progress?.sectionLabel || '';
+
+      // Get surrounding text from the selection's section
+      let surroundingText = '';
+      try {
+        const view = getView(bookKey);
+        if (view && sel.range) {
+          const container = sel.range.commonAncestorContainer;
+          const parentEl =
+            container.nodeType === Node.TEXT_NODE
+              ? container.parentElement
+              : (container as Element);
+          if (parentEl) {
+            // Get a few sibling paragraphs for context
+            const siblings: string[] = [];
+            let el: Element | null = parentEl;
+            // Go back up to 3 siblings
+            for (let i = 0; i < 3 && el?.previousElementSibling; i++) {
+              el = el.previousElementSibling;
+              siblings.unshift(el.textContent?.trim() || '');
+            }
+            siblings.push(parentEl.textContent?.trim() || '');
+            el = parentEl;
+            // Go forward up to 3 siblings
+            for (let i = 0; i < 3 && el?.nextElementSibling; i++) {
+              el = el.nextElementSibling;
+              siblings.push(el.textContent?.trim() || '');
+            }
+            surroundingText = siblings.filter(Boolean).join('\n\n');
+          }
+        }
+      } catch {
+        // Surrounding text extraction is best-effort
+      }
+
+      // Capture the selection's location so an AI summary can later be saved as
+      // a note anchored to this exact passage.
+      let cfi: string | undefined;
+      try {
+        cfi = getView(bookKey)?.getCFI(sel.index, sel.range);
+      } catch {
+        // best-effort — a missing cfi just disables "save as note" for this chat
+      }
+
+      useChatStore.getState().setPendingContext({
+        selectedText: sel.text,
+        surroundingText,
+        chapterTitle,
+        chapterText: '', // Full chapter text injected via system prompt
+        bookTitle: book?.title || '',
+        bookAuthor: book?.author || '',
+        cfi,
+        page: progress?.page,
+      });
+      if (open) useChatStore.getState().setOpen(true);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bookKey],
+  );
+
   const handleSendToChat = () => {
     if (!selection || !selection.text) return;
     setShowAnnotPopup(false);
-
-    const { book } = bookData;
-    const progress = getProgress(bookKey);
-
-    // Get current chapter title from progress
-    const chapterTitle = progress?.sectionLabel || '';
-
-    // Get surrounding text from the selection's section
-    let surroundingText = '';
-    try {
-      const view = getView(bookKey);
-      if (view && selection.range) {
-        const container = selection.range.commonAncestorContainer;
-        const parentEl = container.nodeType === Node.TEXT_NODE ? container.parentElement : container as Element;
-        if (parentEl) {
-          // Get a few sibling paragraphs for context
-          const siblings: string[] = [];
-          let el: Element | null = parentEl;
-          // Go back up to 3 siblings
-          for (let i = 0; i < 3 && el?.previousElementSibling; i++) {
-            el = el.previousElementSibling;
-            siblings.unshift(el.textContent?.trim() || '');
-          }
-          siblings.push(parentEl.textContent?.trim() || '');
-          el = parentEl;
-          // Go forward up to 3 siblings
-          for (let i = 0; i < 3 && el?.nextElementSibling; i++) {
-            el = el.nextElementSibling;
-            siblings.push(el.textContent?.trim() || '');
-          }
-          surroundingText = siblings.filter(Boolean).join('\n\n');
-        }
-      }
-    } catch {
-      // Surrounding text extraction is best-effort
-    }
-
-    useChatStore.getState().setPendingContext({
-      selectedText: selection.text,
-      surroundingText,
-      chapterTitle,
-      chapterText: '', // Full chapter text injected via system prompt
-      bookTitle: book?.title || '',
-      bookAuthor: book?.author || '',
-    });
-    useChatStore.getState().setOpen(true);
+    sendSelectionToChat(selection, true);
   };
+
+  // When the AI chat panel is already open, selecting a passage automatically
+  // sends it to the chat as context — no need to click "Ask AI".
+  useEffect(() => {
+    if (!chatIsOpen) return;
+    if (!selection?.text || selection.annotated) return;
+    sendSelectionToChat(selection, false);
+  }, [selection, chatIsOpen, sendSelectionToChat]);
 
   const handleStartEditAnnotation = useCallback(() => {
     setShowAnnotPopup(false);

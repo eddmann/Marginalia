@@ -38,7 +38,10 @@ tauri-plugin-log = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-os = "2"
-tauri-plugin-http = { version = "2", features = ["dangerous-settings", "unsafe-headers"] }
+# native-tls added so the HTTP client uses the macOS system trust store; the
+# default rustls roots reject chatgpt.com's cert issuer (UnknownIssuer), which
+# broke Codex/ChatGPT-backend requests while Claude (anthropic) still worked.
+tauri-plugin-http = { version = "2", features = ["dangerous-settings", "unsafe-headers", "native-tls"] }
 
 tauri-plugin-process = "2"
 tauri-plugin-opener = "2"

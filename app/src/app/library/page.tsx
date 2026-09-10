@@ -60,6 +60,7 @@ import {
 } from './utils/libraryUtils';
 import Spinner from '@/components/Spinner';
 import LibraryHeader from './components/LibraryHeader';
+import GitHubImportDialog from './components/GitHubImportDialog';
 import Bookshelf from './components/Bookshelf';
 import GroupHeader from './components/GroupHeader';
 import useShortcuts from '@/hooks/useShortcuts';
@@ -97,6 +98,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   const { settings, setSettings } = useSettingsStore();
   const { isSettingsDialogOpen, setSettingsDialogOpen } = useSettingsStore();
   const [loading, setLoading] = useState(false);
+  const [showGithubDialog, setShowGithubDialog] = useState(false);
   const [libraryLoaded, setLibraryLoaded] = useState(false);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [isSelectAll, setIsSelectAll] = useState(false);
@@ -638,6 +640,11 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     });
   };
 
+  const handleImportBooksFromGithub = () => {
+    setIsSelectMode(false);
+    setShowGithubDialog(true);
+  };
+
   const handleImportBooksFromDirectory = async () => {
     if (!appService || !isTauriAppPlatform()) return;
 
@@ -729,6 +736,9 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           onImportBooksFromFiles={handleImportBooksFromFiles}
           onImportBooksFromDirectory={
             appService?.canReadExternalDir ? handleImportBooksFromDirectory : undefined
+          }
+          onImportBooksFromGithub={
+            isTauriAppPlatform() ? handleImportBooksFromGithub : undefined
           }
           onToggleSelectMode={() => handleSetSelectMode(!isSelectMode)}
           onSelectAll={handleSelectAll}
@@ -865,6 +875,13 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         />
       )}
       <MigrateDataWindow />
+      {showGithubDialog && (
+        <GitHubImportDialog
+          isOpen={showGithubDialog}
+          onClose={() => setShowGithubDialog(false)}
+          onImportFile={(file) => importBooks([{ file }])}
+        />
+      )}
       {isSettingsDialogOpen && <SettingsDialog bookKey={''} />}
       <Toast />
     </div>
